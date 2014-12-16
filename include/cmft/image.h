@@ -80,6 +80,10 @@ namespace cmft
             RGB16F,
             RGB32F,
             RGBE,
+            BGRE8,
+            BGRM8,
+            BGRD8,
+            LOGLUV8,
 
             BGRA8,
             RGBA8,

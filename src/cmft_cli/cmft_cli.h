@@ -107,6 +107,10 @@ static const CliOptionMap s_validTextureFormats[] =
     { "rgb16f",  TextureFormat::RGB16F  },
     { "rgb32f",  TextureFormat::RGB32F  },
     { "rgbe",    TextureFormat::RGBE    },
+    { "bgre8",   TextureFormat::BGRE8   },
+    { "bgrm8",   TextureFormat::BGRM8   },
+    { "bgrd8",   TextureFormat::BGRD8   },
+    { "logluv8", TextureFormat::LOGLUV8 },
     { "bgra8",   TextureFormat::BGRA8   },
     { "rgba8",   TextureFormat::RGBA8   },
     { "rgba16",  TextureFormat::RGBA16  },
@@ -203,6 +207,7 @@ struct InputParameters
     float m_outputGammaPowNumerator;
     float m_outputGammaPowDenominator;
     bool m_generateMipMapChain;
+    float m_maxrange;
 
     // Cubemap rotate/flip.
     uint32_t m_imageOpPosX;

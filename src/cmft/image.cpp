@@ -13,11 +13,36 @@
 
 #include <bx/uint32_t.h>
 #include <bx/endian.h>
+#include <bx/float4x4_t.h>
 
 #include <string.h>
 
 namespace cmft
 {
+    // Max value used in rgbm / rgbd calculations.
+    static const float MAXRANGE = 6.0f;
+
+    // LogLUV matrix, for encoding
+    /*const static bx::float4x4_t LOGLUV_ENCODE = {
+        0.2209, 0.3390, 0.4184, 0.0,
+        0.1138, 0.6780, 0.7319, 0.0,
+        0.0102, 0.1130, 0.2969, 0.0,
+        0.0, 0.0, 0.0, 1.0 };*/
+
+    const static bx::float4x4_t LOGLUV_ENCODE = {
+        0.2209, 0.1138, 0.0102, 0.0,
+        0.3390, 0.6780, 0.1130, 0.0,
+        0.4184, 0.7319, 0.2969, 0.0,
+        0.0,0.0,0.0,1.0
+    };
+
+    // Inverse M matrix, for decoding
+    const static bx::float4x4_t LOGLUV_DECODE = {
+        6.0014, -2.7008, -1.7996, 0.0,
+        -1.3320, 3.1029, -5.7721, 0.0,
+        0.3008, -1.0882, 5.6268, 0.0,
+        0.0, 0.0, 0.0, 1.0 };
+
     // Texture format string.
     //-----
 
@@ -29,6 +54,10 @@ namespace cmft
         "RGB16F",    //RGB16F
         "RGB32F",    //RGB32F
         "RGBE",      //RGBE
+        "BGRE8",     //BGRE8
+        "BGRM8",     //RGBM8
+        "BGRD8",     //RGBD8
+        "LOGLUV8",   //LOGLUV8
         "BGRA8",     //BGRA8
         "RGBA8",     //RGBA8
         "RGBA16",    //RGBA16
@@ -235,6 +264,10 @@ namespace cmft
     {
         TextureFormat::BGR8,
         TextureFormat::BGRA8,
+        TextureFormat::BGRE8,
+        TextureFormat::BGRM8,
+        TextureFormat::BGRD8,
+        TextureFormat::LOGLUV8,
         TextureFormat::RGBA16,
         TextureFormat::RGBA16F,
         TextureFormat::RGBA32F,
@@ -375,6 +408,10 @@ namespace cmft
         {  6, 3, 0, PixelDataType::HALF_FLOAT  }, //RGB16F
         { 12, 3, 0, PixelDataType::FLOAT       }, //RGB32F
         {  4, 4, 0, PixelDataType::UINT8       }, //RGBE
+        {  4, 4, 0, PixelDataType::UINT8       }, //BGRE8
+        {  4, 4, 0, PixelDataType::UINT8       }, //BGRM8
+        {  4, 4, 0, PixelDataType::UINT8       }, //BGRD8
+        {  4, 4, 0, PixelDataType::UINT8       }, //LOGLUV8
         {  4, 4, 1, PixelDataType::UINT8       }, //BGRA8
         {  4, 4, 1, PixelDataType::UINT8       }, //RGBA8
         {  8, 4, 1, PixelDataType::UINT16      }, //RGBA16
@@ -584,6 +621,10 @@ namespace cmft
     {
         { sizeof(DdsPixelFormat), DDPF_RGB,  D3DFMT_R8G8B8,   24, 0x00ff0000, 0x0000ff00, 0x000000ff, 0x00000000 }, //BGR8
         { sizeof(DdsPixelFormat), DDPF_RGBA, D3DFMT_A8B8G8R8, 32, 0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000 }, //BGRA8
+        { sizeof(DdsPixelFormat), DDPF_RGBA, D3DFMT_A8B8G8R8, 32, 0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000 }, //BGRE8
+        { sizeof(DdsPixelFormat), DDPF_RGBA, D3DFMT_A8B8G8R8, 32, 0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000 }, //BGRM8
+        { sizeof(DdsPixelFormat), DDPF_RGBA, D3DFMT_A8B8G8R8, 32, 0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000 }, //BGRD8
+        { sizeof(DdsPixelFormat), DDPF_RGBA, D3DFMT_A8B8G8R8, 32, 0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000 }, //LOGLUV8
         { sizeof(DdsPixelFormat), DDPF_FOURCC, DDS_DX10,  64, 0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000 }, //RGBA16
         { sizeof(DdsPixelFormat), DDPF_FOURCC, DDS_DX10,  64, 0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000 }, //RGBA16F
         { sizeof(DdsPixelFormat), DDPF_FOURCC, DDS_DX10, 128, 0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000 }, //RGBA32F
@@ -593,10 +634,14 @@ namespace cmft
     {
         DEBUG_CHECK(checkValidTextureFormat(ImageFileType::DDS, _format), "Not a valid DDS texture format!");
         if      (TextureFormat::BGR8    == _format) { return s_ddsPixelFormat[0];  }
-        else if (TextureFormat::BGRA8   == _format) { return s_ddsPixelFormat[1];  }
-        else if (TextureFormat::RGBA16  == _format) { return s_ddsPixelFormat[2];  }
-        else if (TextureFormat::RGBA16F == _format) { return s_ddsPixelFormat[3];  }
-        else/*(TextureFormat::RGBA32F == _format)*/ { return s_ddsPixelFormat[4];  }
+        else if (TextureFormat::BGRA8 == _format)   { return s_ddsPixelFormat[1];  }
+        else if (TextureFormat::BGRE8 == _format)   { return s_ddsPixelFormat[2]; }
+        else if (TextureFormat::BGRM8 == _format)   { return s_ddsPixelFormat[3]; }
+        else if (TextureFormat::BGRD8 == _format)   { return s_ddsPixelFormat[4]; }
+        else if (TextureFormat::LOGLUV8 == _format)   { return s_ddsPixelFormat[5]; }
+        else if (TextureFormat::RGBA16  == _format) { return s_ddsPixelFormat[6];  }
+        else if (TextureFormat::RGBA16F == _format) { return s_ddsPixelFormat[7];  }
+        else/*(TextureFormat::RGBA32F == _format)*/ { return s_ddsPixelFormat[8];  }
     }
 
     static inline uint8_t getDdsDxgiFormat(TextureFormat::Enum _format)
@@ -627,11 +672,19 @@ namespace cmft
     {
         { D3DFMT_R8G8B8,          TextureFormat::BGR8    },
         { D3DFMT_A8R8G8B8,        TextureFormat::BGRA8   },
+        { D3DFMT_A8R8G8B8,        TextureFormat::BGRE8   },
+        { D3DFMT_A8R8G8B8,        TextureFormat::BGRM8   },
+        { D3DFMT_A8R8G8B8,        TextureFormat::BGRD8   },
+        { D3DFMT_A8R8G8B8,        TextureFormat::LOGLUV8 },
         { D3DFMT_A16B16G16R16,    TextureFormat::RGBA16  },
         { D3DFMT_A16B16G16R16F,   TextureFormat::RGBA16F },
         { D3DFMT_A32B32G32R32F,   TextureFormat::RGBA32F },
         { DDS_PF_BC_24|DDPF_RGB,  TextureFormat::BGR8    },
         { DDS_PF_BC_32|DDPF_RGBA, TextureFormat::BGRA8   },
+        { DDS_PF_BC_32|DDPF_RGBA, TextureFormat::BGRE8   },
+        { DDS_PF_BC_32|DDPF_RGBA, TextureFormat::BGRM8   },
+        { DDS_PF_BC_32|DDPF_RGBA, TextureFormat::BGRD8   },
+        { DDS_PF_BC_32|DDPF_RGBA, TextureFormat::LOGLUV8 },
         { DDS_PF_BC_48|DDPF_RGB,  TextureFormat::RGB16   },
     };
 
@@ -722,6 +775,10 @@ namespace cmft
         { GL_RGB32F,   GL_RGB  }, //RGB32F
         { 0, 0 }, //RGBE
         { 0, 0 }, //BGRA8
+        { 0, 0 }, //BGRE8
+        { 0, 0 }, //BGRM8
+        { 0, 0 }, //BGRD8
+        { 0, 0 }, //LOGLUV8
         { GL_RGBA8UI,  GL_RGBA }, //RGBA8
         { GL_RGBA16UI, GL_RGBA }, //RGBA16
         { GL_RGBA16F,  GL_RGBA }, //RGBA16F
@@ -1233,7 +1290,7 @@ namespace cmft
     {
         if (_rgbe[3])
         {
-            const float exp = ldexp(1.0f, _rgbe[3] - (128+8));
+            const float exp = ldexp(1.0f, _rgbe[3] - (128 + 8));
             _rgba32f[0] = float(_rgbe[0]) * exp;
             _rgba32f[1] = float(_rgbe[1]) * exp;
             _rgba32f[2] = float(_rgbe[2]) * exp;
@@ -1248,6 +1305,46 @@ namespace cmft
         }
     }
 
+    inline void bgre8ToRgba32f(float* _rgba32f, const uint8_t* _rgbe)
+    {
+        if (_rgbe[3])
+        {
+            const float exp = ldexp(1.0f, _rgbe[3] - (128 + 8));
+            _rgba32f[0] = float(_rgbe[2]) * exp;
+            _rgba32f[1] = float(_rgbe[1]) * exp;
+            _rgba32f[2] = float(_rgbe[0]) * exp;
+            _rgba32f[3] = 1.0f;
+        }
+        else
+        {
+            _rgba32f[0] = 0.0f;
+            _rgba32f[1] = 0.0f;
+            _rgba32f[2] = 0.0f;
+            _rgba32f[3] = 1.0f;
+        }
+    }
+
+    inline void bgrm8ToRgba32f(float* _rgba32f, const uint8_t* _rgbm)
+    {
+        _rgba32f[0] = float(_rgbm[2]) * _rgbm[3] * MAXRANGE;
+        _rgba32f[1] = float(_rgbm[1]) * _rgbm[3] * MAXRANGE;
+        _rgba32f[2] = float(_rgbm[0]) * _rgbm[3] * MAXRANGE;
+        _rgba32f[3] = 1.0f;
+    }
+
+    inline void bgrd8ToRgba32f(float* _rgba32f, const uint8_t* _rgbd)
+    {
+        _rgba32f[0] = float(_rgbd[2]) * ((MAXRANGE / 255.0f) / _rgbd[3]);
+        _rgba32f[1] = float(_rgbd[1]) * ((MAXRANGE / 255.0f) / _rgbd[3]);
+        _rgba32f[2] = float(_rgbd[0]) * ((MAXRANGE / 255.0f) / _rgbd[3]);
+        _rgba32f[3] = 1.0f;
+    }
+
+    inline void logluv8ToRgba32f(float* _rgba32f, const uint8_t* _logluv)
+    {
+        /* no need to decode... */
+    }
+
     void toRgba32f(float _rgba32f[4], TextureFormat::Enum _srcFormat, const void* _src)
     {
         switch(_srcFormat)
@@ -1258,6 +1355,10 @@ namespace cmft
         case TextureFormat::RGB16F:   rgb16fToRgba32f(_rgba32f,  (uint16_t*)_src); break;
         case TextureFormat::RGB32F:   rgb32fToRgba32f(_rgba32f,     (float*)_src); break;
         case TextureFormat::RGBE:     rgbeToRgba32f(_rgba32f,     (uint8_t*)_src); break;
+        case TextureFormat::BGRE8:    bgre8ToRgba32f(_rgba32f,    (uint8_t*)_src); break;
+        case TextureFormat::BGRM8:    bgrm8ToRgba32f(_rgba32f,    (uint8_t*)_src); break;
+        case TextureFormat::BGRD8:    bgrd8ToRgba32f(_rgba32f,    (uint8_t*)_src); break;
+        case TextureFormat::LOGLUV8:  logluv8ToRgba32f(_rgba32f,  (uint8_t*)_src); break;
         case TextureFormat::BGRA8:    bgra8ToRgba32f(_rgba32f,    (uint8_t*)_src); break;
         case TextureFormat::RGBA8:    rgba8ToRgba32f(_rgba32f,    (uint8_t*)_src); break;
         case TextureFormat::RGBA16:   rgba16ToRgba32f(_rgba32f,  (uint16_t*)_src); break;
@@ -1349,6 +1450,50 @@ namespace cmft
                     rgbeToRgba32f(dst, src);
                 }
             }
+        break;
+
+        case TextureFormat::BGRE8:
+        {
+            const uint8_t* src = (const uint8_t*)_src.m_data;
+
+            for (; dst < end; dst += 4, src += 4)
+            {
+                bgre8ToRgba32f(dst, src);
+            }
+        }
+        break;
+
+        case TextureFormat::BGRM8:
+        {
+            const uint8_t* src = (const uint8_t*)_src.m_data;
+
+            for (; dst < end; dst += 4, src += 4)
+            {
+                bgrm8ToRgba32f(dst, src);
+            }
+        }
+        break;
+
+        case TextureFormat::BGRD8:
+        {
+            const uint8_t* src = (const uint8_t*)_src.m_data;
+
+            for (; dst < end; dst += 4, src += 4)
+            {
+                bgrd8ToRgba32f(dst, src);
+            }
+        }
+        break;
+
+        case TextureFormat::LOGLUV8:
+        {
+            const uint8_t* src = (const uint8_t*)_src.m_data;
+
+            for (; dst < end; dst += 4, src += 4)
+            {
+                logluv8ToRgba32f(dst, src);
+            }
+        }
         break;
 
         case TextureFormat::BGRA8:
@@ -1510,11 +1655,68 @@ namespace cmft
     {
         const float maxVal = max(_rgba32f[0], max(_rgba32f[1], _rgba32f[2]));
         const float exp = ceilf(log2f(maxVal));
-        const float toRgb8 = 255.0f * 1.0f/ldexp(1.0f, int(exp)); //ldexp -> exp2 (c++11 - <cmath.h>)
+        const float toRgb8 = 255.0f * 1.0f / ldexp(1.0f, int(exp)); //ldexp -> exp2 (c++11 - <cmath.h>)
         _rgbe[0] = uint8_t(_rgba32f[0] * toRgb8);
         _rgbe[1] = uint8_t(_rgba32f[1] * toRgb8);
         _rgbe[2] = uint8_t(_rgba32f[2] * toRgb8);
-        _rgbe[3] = uint8_t(exp+128.0f);
+        _rgbe[3] = uint8_t(exp + 128.0f);
+    }
+
+    inline void bgre8FromRgba32f(uint8_t* _rgbe, const float* _rgba32f)
+    {
+        const float maxVal = max(_rgba32f[0], max(_rgba32f[1], _rgba32f[2]));
+        const float exp = ceilf(log2f(maxVal));
+        const float toRgb8 = 255.0f * 1.0f / ldexp(1.0f, int(exp)); //ldexp -> exp2 (c++11 - <cmath.h>)
+        _rgbe[2] = uint8_t(_rgba32f[0] * toRgb8 + 64.0f);
+        _rgbe[1] = uint8_t(_rgba32f[1] * toRgb8 + 128.0f);
+        _rgbe[0] = uint8_t(_rgba32f[2] * toRgb8);
+        _rgbe[3] = uint8_t(exp + 128.0f);
+    }
+
+    inline void bgrm8FromRgba32f(uint8_t* _rgbm, const float* _rgba32f)
+    {
+        const float maxVal = max(_rgba32f[0], max(_rgba32f[1], _rgba32f[2]));
+        const float MaxRange = 20.0f;
+        const float MaxValue = 255.0f * MaxRange;
+        const float M = max(maxVal * 255.0f, 1.0f);
+        const float scale = 255.0f / log2f(MaxValue);
+        const float m = 255.0f * 255.0f / M;
+        _rgbm[2] = uint8_t(_rgba32f[0] * m);
+        _rgbm[1] = uint8_t(_rgba32f[1] * m);
+        _rgbm[0] = uint8_t(_rgba32f[2] * m);
+        _rgbm[3] = uint8_t(log2f(M) * scale);
+        //rgbm.a = log2f(max(maxVal * 255.0f, 1.0f)) * 255.0f / log2f(MaxValue);
+    }
+
+    inline void bgrd8FromRgba32f(uint8_t* _rgbd, const float* _rgba32f)
+    {
+        const float maxVal = max(_rgba32f[0], max(_rgba32f[1], _rgba32f[2]));
+        const float MaxRange = 20.0f;
+        const float MaxValue = 255.0f * MaxRange;
+        const float D = max(maxVal * 255.0f, 1.0f);
+        const float scale = 255.0f / log2f(MaxValue);
+        const float d = 255.0f * 255.0f / D;
+        _rgbd[2] = uint8_t(_rgba32f[0] * d);
+        _rgbd[1] = uint8_t(_rgba32f[1] * d);
+        _rgbd[0] = uint8_t(_rgba32f[2] * d);
+        // optimization: float c = (log2f(MaxRange) + log2f(D)) * scale;
+        _rgbd[3] = uint8_t(log2f(MaxValue / D) * scale);
+        //rgbd.a = log2f(MaxValue / max(maxVal * 255.0f, 1.0f)) * 255.0f / log2f(MaxValue)
+    }
+
+    inline void logluv8FromRgba32f(uint8_t* _logluv, const float* _rgba32f)
+    {
+        bx::float4_t vRGB = { _rgba32f[0], _rgba32f[1], _rgba32f[2], 0.0f };
+        bx::float4_t Xp_Y_XYZp = bx::float4_mul_xyz1(vRGB, &LOGLUV_ENCODE);
+        bx::float4_t epsilons = { 0.000001f, 0.000001f, 0.000001, 0.000001 };
+        Xp_Y_XYZp = bx::float4_max(Xp_Y_XYZp, epsilons);
+        _logluv[2] = bx::float4_x(Xp_Y_XYZp) / bx::float4_z(Xp_Y_XYZp) * 255.0f + 64.0f;
+        _logluv[1] = bx::float4_y(Xp_Y_XYZp) / bx::float4_z(Xp_Y_XYZp) * 255.0f + 64.0f;
+        float Le = 2.0f * log2f(bx::float4_y(Xp_Y_XYZp)) * 127.0f;
+        float w;
+        modf(Le, &w);
+        _logluv[3] = w / 2.0f + 127.0f;
+        _logluv[0] = (Le - floorf(w * 255.0f) / 255.0f);
     }
 
     void fromRgba32f(void* _out, TextureFormat::Enum _format, const float _rgba32f[4])
@@ -1527,6 +1729,10 @@ namespace cmft
         case TextureFormat::RGB16F:   rgb16fFromRgba32f((uint16_t*)_out,  _rgba32f); break;
         case TextureFormat::RGB32F:   rgb32fFromRgba32f((float*)_out,     _rgba32f); break;
         case TextureFormat::RGBE:     rgbeFromRgba32f((uint8_t*)_out,     _rgba32f); break;
+        case TextureFormat::BGRE8:    bgre8FromRgba32f((uint8_t*)_out,    _rgba32f); break;
+        case TextureFormat::BGRM8:    bgrm8FromRgba32f((uint8_t*)_out,    _rgba32f); break;
+        case TextureFormat::BGRD8:    bgrd8FromRgba32f((uint8_t*)_out,    _rgba32f); break;
+        case TextureFormat::LOGLUV8:  logluv8FromRgba32f((uint8_t*)_out,  _rgba32f); break;
         case TextureFormat::BGRA8:    bgra8FromRgba32f((uint8_t*)_out,    _rgba32f); break;
         case TextureFormat::RGBA8:    rgba8FromRgba32f((uint8_t*)_out,    _rgba32f); break;
         case TextureFormat::RGBA16:   rgba16FromRgba32f((uint16_t*)_out,  _rgba32f); break;
@@ -1621,6 +1827,46 @@ namespace cmft
                 }
             }
         break;
+
+        case TextureFormat::BGRE8:
+            {
+                uint8_t* dst = (uint8_t*)dstData;
+
+                for (;src < end; src+=4, dst+=4)
+                {
+                    bgre8FromRgba32f(dst, src);
+                }
+            }
+
+        case TextureFormat::BGRM8:
+        {
+            uint8_t* dst = (uint8_t*)dstData;
+
+            for (; src < end; src += 4, dst += 4)
+            {
+                bgrm8FromRgba32f(dst, src);
+            }
+        }
+
+        case TextureFormat::BGRD8:
+        {
+            uint8_t* dst = (uint8_t*)dstData;
+
+            for (; src < end; src += 4, dst += 4)
+            {
+                bgrd8FromRgba32f(dst, src);
+            }
+        }
+
+        case TextureFormat::LOGLUV8:
+        {
+            uint8_t* dst = (uint8_t*)dstData;
+
+            for (; src < end; src += 4, dst += 4)
+            {
+                logluv8FromRgba32f(dst, src);
+            }
+        }
 
         case TextureFormat::BGRA8:
             {
@@ -2517,6 +2763,10 @@ namespace cmft
         case TextureFormat::RGB8:
         case TextureFormat::BGRA8:
         case TextureFormat::RGBA8:
+        case TextureFormat::BGRE8:
+        case TextureFormat::BGRM8:
+        case TextureFormat::BGRD8:
+        case TextureFormat::LOGLUV8:
             {
                 for (uint8_t key = 0; (true == result) && (key < 6); ++key)
                 {
